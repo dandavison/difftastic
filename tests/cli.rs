@@ -50,6 +50,20 @@ fn inline() {
 }
 
 #[test]
+fn unified_display() {
+    let mut cmd = get_base_command();
+
+    cmd.arg("--display=unified")
+        .arg("sample_files/simple_1.js")
+        .arg("sample_files/simple_2.js");
+
+    let stdout = predicate::str::contains("--- a/")
+        .and(predicate::str::contains("+++ b/"))
+        .and(predicate::str::contains("@@ -"));
+    cmd.assert().success().stdout(stdout);
+}
+
+#[test]
 fn binary_changed() {
     let mut cmd = get_base_command();
 
