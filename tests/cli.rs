@@ -64,6 +64,21 @@ fn unified_display() {
 }
 
 #[test]
+fn unified_merged_hunk_context() {
+    // When two changes merge into one hunk, intermediate context must appear.
+    // unified_lhs.py has two nearby call sites reformatted with trailing commas
+    // in unified_rhs.py; the `pass` line between them is intermediate context.
+    let mut cmd = get_base_command();
+
+    cmd.arg("--display=unified")
+        .arg("sample_files/cli_tests/unified_lhs.py")
+        .arg("sample_files/cli_tests/unified_rhs.py");
+
+    let stdout = predicate::str::contains(" pass");
+    cmd.assert().success().stdout(stdout);
+}
+
+#[test]
 fn binary_changed() {
     let mut cmd = get_base_command();
 
@@ -293,4 +308,34 @@ fn walk_hidden_items() {
             .and(predicate::str::contains("before"))
             .and(predicate::str::contains("after"));
     cmd.assert().stdout(predicate_fn);
+}
+
+#[test]
+fn unified_merged_hunk_exact_output() {
+    let mut cmd = get_base_command();
+
+    cmd.arg("--display=unified")
+        .arg("sample_files/cli_tests/unified_lhs.py")
+        .arg("sample_files/cli_tests/unified_rhs.py");
+
+    let expected = concat!(
+        "--- a/sample_files/cli_tests/unified_rhs.py\n",
+        "+++ b/sample_files/cli_tests/unified_rhs.py\n",
+        "@@ -1,4 +1,12 @@\n",
+        "-result = foo(x, y, z)\n",
+        "+result = foo(\n",
+        "+    x,\n",
+        "+    y,\n",
+        "+    z,\n",
+        "+)\n",
+        " pass\n",
+        "-value = bar(a, b, c)\n",
+        "+value = bar(\n",
+        "+    a,\n",
+        "+    b,\n",
+        "+    c,\n",
+        "+)\n",
+        " \n",
+    );
+    cmd.assert().success().stdout(expected);
 }
