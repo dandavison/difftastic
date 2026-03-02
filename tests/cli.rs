@@ -64,6 +64,21 @@ fn unified_display() {
 }
 
 #[test]
+fn unified_merged_hunk_context() {
+    // When two changes merge into one hunk, intermediate context must appear.
+    // unified_lhs.py has two nearby call sites reformatted with trailing commas
+    // in unified_rhs.py; the `pass` line between them is intermediate context.
+    let mut cmd = get_base_command();
+
+    cmd.arg("--display=unified")
+        .arg("sample_files/cli_tests/unified_lhs.py")
+        .arg("sample_files/cli_tests/unified_rhs.py");
+
+    let stdout = predicate::str::contains(" pass");
+    cmd.assert().success().stdout(stdout);
+}
+
+#[test]
 fn binary_changed() {
     let mut cmd = get_base_command();
 
