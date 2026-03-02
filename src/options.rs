@@ -206,7 +206,7 @@ fn app() -> clap::Command {
         )
         .arg(
             Arg::new("display").long("display")
-                .value_parser(["side-by-side", "side-by-side-show-both", "inline", "json"])
+                .value_parser(["side-by-side", "side-by-side-show-both", "inline", "json", "unified"])
                 .default_value("side-by-side")
                 .value_name("MODE")
                 .action(ArgAction::Set)
@@ -219,7 +219,9 @@ side-by-side-show-both: The same as side-by-side, but always uses two columns.
 
 inline: A single column display, closer to traditional diff display.
 
-json: Output the results as a machine-readable JSON array with an element per file.")
+json: Output the results as a machine-readable JSON array with an element per file.
+
+unified: Output a unified diff (similar to git diff). This uses AST-aware change detection but produces standard unified diff format that can be consumed by other tools.")
         )
         .arg(
             Arg::new("color").long("color")
@@ -382,6 +384,7 @@ pub(crate) enum DisplayMode {
     SideBySide,
     SideBySideShowBoth,
     Json,
+    Unified,
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -803,6 +806,7 @@ pub(crate) fn parse_args() -> Mode {
 
             DisplayMode::Json
         }
+        "unified" => DisplayMode::Unified,
         _ => {
             unreachable!("clap has already validated display")
         }
