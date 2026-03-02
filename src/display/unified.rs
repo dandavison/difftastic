@@ -2,11 +2,9 @@
 
 use line_numbers::LineNumber;
 
-use crate::display::context::{
-    calculate_after_context, calculate_before_context, opposite_positions,
-};
-use crate::display::hunks::Hunk;
-use crate::lines::{split_on_newlines, MaxLine};
+use crate::display::context::all_matched_lines_filled;
+use crate::display::hunks::{matched_lines_indexes_for_hunk, Hunk};
+use crate::lines::split_on_newlines;
 use crate::options::DisplayOptions;
 use crate::parse::syntax::MatchedPos;
 
@@ -23,8 +21,7 @@ pub(crate) fn print(
     let lhs_lines: Vec<&str> = split_on_newlines(lhs_src).collect();
     let rhs_lines: Vec<&str> = split_on_newlines(rhs_src).collect();
 
-    let opposite_to_lhs = opposite_positions(lhs_mps);
-    let opposite_to_rhs = opposite_positions(rhs_mps);
+    let matched_lines = all_matched_lines_filled(lhs_mps, rhs_mps, &lhs_lines, &rhs_lines);
 
     let display_path = display_path.strip_prefix('/').unwrap_or(display_path);
 
@@ -37,31 +34,14 @@ pub(crate) fn print(
     }
 
     for hunk in hunks {
-        let hunk_lines = hunk.lines.clone();
-
-        let before_lines = calculate_before_context(
-            &hunk_lines,
-            &opposite_to_lhs,
-            &opposite_to_rhs,
+        let (start_i, end_i) = matched_lines_indexes_for_hunk(
+            &matched_lines,
+            hunk,
             display_options.num_context_lines as usize,
         );
-        let after_lines = calculate_after_context(
-            &[&before_lines[..], &hunk_lines[..]].concat(),
-            &opposite_to_lhs,
-            &opposite_to_rhs,
-            lhs_src.max_line(),
-            rhs_src.max_line(),
-            display_options.num_context_lines as usize,
-        );
+        let aligned_lines = &matched_lines[start_i..end_i];
 
-        let all_lines: Vec<(Option<LineNumber>, Option<LineNumber>)> = before_lines
-            .iter()
-            .chain(hunk_lines.iter())
-            .chain(after_lines.iter())
-            .copied()
-            .collect();
-
-        let entries = classify_lines(&all_lines, &hunk.novel_lhs, &hunk.novel_rhs);
+        let entries = classify_lines(aligned_lines, &lhs_lines, &rhs_lines);
         let grouped = group_entries(entries);
 
         let (lhs_start, lhs_count, rhs_start, rhs_count) = hunk_header_counts(&grouped);
@@ -117,19 +97,21 @@ impl UnifiedEntry {
 }
 
 /// Convert aligned line pairs into a sequence of unified diff entries.
+/// Classification is based on text equality, not novel sets: the AST
+/// awareness is in hunk selection (which hunks to emit), not in
+/// within-hunk line classification.
 fn classify_lines(
     lines: &[(Option<LineNumber>, Option<LineNumber>)],
-    novel_lhs: &crate::hash::DftHashSet<LineNumber>,
-    novel_rhs: &crate::hash::DftHashSet<LineNumber>,
+    lhs_lines: &[&str],
+    rhs_lines: &[&str],
 ) -> Vec<UnifiedEntry> {
     let mut entries = Vec::new();
 
     for &(lhs_line, rhs_line) in lines {
-        let lhs_novel = lhs_line.map_or(false, |l| novel_lhs.contains(&l));
-        let rhs_novel = rhs_line.map_or(false, |r| novel_rhs.contains(&r));
-
         match (lhs_line, rhs_line) {
-            (Some(l), Some(r)) if !lhs_novel && !rhs_novel => {
+            (Some(l), Some(r))
+                if line_content(l, lhs_lines) == line_content(r, rhs_lines) =>
+            {
                 entries.push(UnifiedEntry::Context {
                     lhs_line: l,
                     rhs_line: r,
@@ -225,19 +207,17 @@ fn hunk_header_counts(entries: &[UnifiedEntry]) -> (u32, u32, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hash::DftHashSet;
-    use std::iter::FromIterator;
 
     #[test]
     fn test_classify_context_only() {
+        let lhs: Vec<&str> = vec!["aaa", "bbb"];
+        let rhs: Vec<&str> = vec!["aaa", "bbb"];
         let lines = vec![
             (Some(LineNumber::from(0)), Some(LineNumber::from(0))),
             (Some(LineNumber::from(1)), Some(LineNumber::from(1))),
         ];
-        let novel_lhs = DftHashSet::default();
-        let novel_rhs = DftHashSet::default();
 
-        let entries = classify_lines(&lines, &novel_lhs, &novel_rhs);
+        let entries = classify_lines(&lines, &lhs, &rhs);
         assert_eq!(entries.len(), 2);
         assert!(matches!(entries[0], UnifiedEntry::Context { .. }));
         assert!(matches!(entries[1], UnifiedEntry::Context { .. }));
@@ -245,11 +225,11 @@ mod tests {
 
     #[test]
     fn test_classify_modification() {
+        let lhs: Vec<&str> = vec!["old"];
+        let rhs: Vec<&str> = vec!["new"];
         let lines = vec![(Some(LineNumber::from(0)), Some(LineNumber::from(0)))];
-        let novel_lhs = DftHashSet::from_iter([LineNumber::from(0)]);
-        let novel_rhs = DftHashSet::from_iter([LineNumber::from(0)]);
 
-        let entries = classify_lines(&lines, &novel_lhs, &novel_rhs);
+        let entries = classify_lines(&lines, &lhs, &rhs);
         assert_eq!(entries.len(), 2);
         assert!(matches!(entries[0], UnifiedEntry::Removed { .. }));
         assert!(matches!(entries[1], UnifiedEntry::Added { .. }));
@@ -257,22 +237,22 @@ mod tests {
 
     #[test]
     fn test_classify_pure_addition() {
+        let lhs: Vec<&str> = vec![];
+        let rhs: Vec<&str> = vec!["new"];
         let lines = vec![(None, Some(LineNumber::from(0)))];
-        let novel_lhs = DftHashSet::default();
-        let novel_rhs = DftHashSet::from_iter([LineNumber::from(0)]);
 
-        let entries = classify_lines(&lines, &novel_lhs, &novel_rhs);
+        let entries = classify_lines(&lines, &lhs, &rhs);
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0], UnifiedEntry::Added { .. }));
     }
 
     #[test]
     fn test_classify_pure_removal() {
+        let lhs: Vec<&str> = vec!["old"];
+        let rhs: Vec<&str> = vec![];
         let lines = vec![(Some(LineNumber::from(0)), None)];
-        let novel_lhs = DftHashSet::from_iter([LineNumber::from(0)]);
-        let novel_rhs = DftHashSet::default();
 
-        let entries = classify_lines(&lines, &novel_lhs, &novel_rhs);
+        let entries = classify_lines(&lines, &lhs, &rhs);
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0], UnifiedEntry::Removed { .. }));
     }
